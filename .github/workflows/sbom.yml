@@ -1,0 +1,165 @@
+name: SBOM & Security Pipeline
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  release:
+    types: [created]
+
+jobs:
+  sbom-and-scan:
+    name: Generate SBOM & Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+      security-events: write
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ──────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 3. Install SBOM tooling only (keep SBOM = shipped app deps) ─
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # ── 4. Generate SBOM from declared runtime requirements ───────
+      - name: Generate CycloneDX SBOM
+        run: |
+          cyclonedx-py requirements requirements.txt -o sbom.json
+          cyclonedx-py requirements requirements.txt -o sbom.xml --of XML
+
+      # ── 5. Install app for Trivy (site-packages scan) ──────────────
+      - name: Install runtime dependencies
+        run: pip install -r requirements.txt
+
+      # ── 6. Upload SBOM as artifact ────────────────────────────────
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: |
+            sbom.json
+            sbom.xml
+          retention-days: 90
+
+      # ── 7. Trivy vulnerability scan (non-zero exit = findings; do not stop job yet)
+      - name: Run Trivy vulnerability scan
+        id: trivy_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          output: trivy-results.txt
+          exit-code: 1
+          severity: CRITICAL,HIGH
+
+      # ── 8. Trivy — output SARIF for GitHub Security tab ──────────
+      - name: Trivy SARIF report
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          exit-code: 0
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+
+      # ── 9. Post summary to PR ─────────────────────────────────────
+      - name: Post SBOM + scan summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Build Trivy summary
+            let trivy = '';
+            try {
+              trivy = fs.readFileSync('trivy-results.txt', 'utf8').trim();
+            } catch {
+              trivy = 'No results file found.';
+            }
+
+            // Build SBOM component count from JSON
+            let sbomSummary = '';
+            try {
+              const sbom = JSON.parse(fs.readFileSync('sbom.json', 'utf8'));
+              const count = sbom.components?.length ?? 0;
+              sbomSummary = `**${count} components** inventoried in SBOM.`;
+            } catch {
+              sbomSummary = 'Could not parse SBOM JSON.';
+            }
+
+            const body = `## 🧾 SBOM & Security Scan Results
+
+            **Commit:** \`${{ github.sha }}\`
+
+            ### 📦 CycloneDX SBOM
+            ${sbomSummary}
+            SBOM files uploaded as artifact: \`sbom-${{ github.sha }}\`
+
+            ### 🔍 Trivy Vulnerability Scan (CRITICAL & HIGH)
+            \`\`\`
+            ${trivy.length > 3000 ? trivy.substring(0, 3000) + '\n...(truncated)' : trivy || 'No vulnerabilities found ✅'}
+            \`\`\`
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      # ── 10. Fail build if Trivy reported CRITICAL/HIGH (uses exit code, not table parsing)
+      - name: Fail pipeline if vulnerabilities found
+        if: steps.trivy_scan.outcome == 'failure'
+        run: |
+          echo "❌ CRITICAL or HIGH vulnerabilities found (Trivy exited with failure)."
+          if [ -f trivy-results.txt ]; then cat trivy-results.txt; else echo "No trivy-results.txt (scan step may have crashed)."; fi
+          exit 1
+
+      - name: Trivy scan clean
+        if: steps.trivy_scan.outcome == 'success'
+        run: echo "✅ No CRITICAL or HIGH vulnerabilities found."
+
+  attach-sbom-to-release:
+    name: Attach SBOM to GitHub Release
+    needs: sbom-and-scan
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom-release
+
+      - name: Upload SBOM to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom-release/sbom.json
+            sbom-release/sbom.xml
