@@ -64,4 +64,7 @@ dmypy.json
 # CI / security scan outputs (regenerated in workflow)
 trivy-results.txt
 trivy.sarif
+sbom.json
+sbom*.json
 sbom.xml
+sbom-*/

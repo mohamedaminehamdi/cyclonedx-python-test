@@ -39,6 +39,8 @@ That builds the SBOM from **declared runtime dependencies** in `requirements.txt
 
 To inventory *everything* installed in the active environment instead, use `cyclonedx-py environment` (not used in CI for this repo).
 
+Generated SBOM and scan outputs (`sbom.json`, `sbom.xml`, `trivy-results.txt`, `trivy.sarif`) are intentionally not committed; CI uploads them as artifacts and attaches SBOMs to releases.
+
 ## CI behavior (summary)
 
 On push, PR, and release, the workflow installs `requirements-dev.txt`, generates `sbom.json` / `sbom.xml` with `cyclonedx-py requirements requirements.txt`, then installs `requirements.txt` so Trivy can scan installed packages. It uploads SBOM artifacts, runs Trivy (table + SARIF), uploads SARIF to GitHub Security, and on PRs comments with the SBOM component count and Trivy output. The job fails if Trivy reports CRITICAL or HIGH issues in its table output.

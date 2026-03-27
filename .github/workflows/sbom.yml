@@ -57,7 +57,7 @@ jobs:
       - name: Run Trivy vulnerability scan
         id: trivy_scan
         continue-on-error: true
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: fs
           scan-ref: .
@@ -68,7 +68,7 @@ jobs:
 
       # ── 8. Trivy — output SARIF for GitHub Security tab ──────────
       - name: Trivy SARIF report
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: fs
           scan-ref: .
@@ -158,7 +158,7 @@ jobs:
           path: sbom-release
 
       - name: Upload SBOM to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
         with:
           files: |
             sbom-release/sbom.json
